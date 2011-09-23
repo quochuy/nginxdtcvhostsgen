@@ -14,6 +14,7 @@ if(isset($_REQUEST["gen_perso_vhost"]) && $_REQUEST["gen_perso_vhost"]==1){
 }
 if(isset($_REQUEST["gen_pro_vhost"]) && $_REQUEST["gen_pro_vhost"]==1){
 	pro_vhost_generate();
+        pro_nginx_vhost_generate();
 	$console .= _("Apache vhost file generated !") ;
 	$console .= "\n" ;
 }

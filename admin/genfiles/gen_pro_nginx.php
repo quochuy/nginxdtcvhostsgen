@@ -1,172 +1,25 @@
 <?php
-
-// This script is launched before restarting apache
+// This script is launched before restarting nginx
 // to check if a bastard has deleted his directories
-// with ftp: apache would refuse to start otherwise.
+// with ftp: nginx would refuse to start otherwise.
 $chk_dir_script="#!/bin/sh
 
 echo \"Checking vhosts directories existance...\"\n";
-function vhost_chk_dir_sh($dir){
-	global $conf_dtc_system_username;
-	global $conf_dtc_system_groupname;
-
-	global $chk_dir_script;
-
-/*	$chk_dir_script .= "
-if [ ! -d $dir ] ; then
-	mkdir -p $dir
-	nobodygroup=`cat /etc/group | cut -f 1 -d: | grep ^nobody`
-	# if we can't find the nobody group, try nogroup
-	if [ -z \"\"\$nobodygroup ]; then
-		nobodygroup=`cat /etc/group | cut -f 1 -d: | grep ^nogroup`
-	fi
-	# if we can't find nogroup, then set to 65534
-	if [ -z \"\"\$nobodygroup ]; then
-		nobodygroup=65534
-	fi
-	chown nobody:\$nobodygroup $dir
-	echo \"Directory $dir was missing and has been created.\"
-fi
-";
-*/
-	$chk_dir_script .= "
-if [ ! -d $dir ] ; then
-	mkdir -p $dir
-	chown $conf_dtc_system_username:$conf_dtc_system_groupname $dir
-	echo \"Directory $dir was missing and has been created.\"
-fi
-";
-}
-
 $chk_certs_script = "#!/bin/sh
 
 echo \"Checking certificates validity...\"
 EXIT_VAL=0\n";
-function check_certs_sh($cert_path,$common_name){
-	global $chk_certs_script;
-	$chk_certs_script .= "if openssl x509 -in $cert_path/$common_name.cert.cert -subject ; then
-	echo \"$common_name checked\"
-else
-	echo \"$common_name is not a valid cert: will not start apache\"
-	EXIT_VAL=1
-fi\n";
-}
 
-function checkCertificate($cert_path,$common_name){
-	global $conf_dtc_system_username;
-	global $conf_dtc_system_groupname;
-	global $conf_dtcadmin_path;
-
-	if(!is_dir($cert_path)){
-		mkdir($cert_path);
-	}
-	if(		   !file_exists("$cert_path/$common_name".".cert.csr")
-			&& !file_exists("$cert_path/privkey.pem")
-			&& !file_exists("$cert_path/$common_name".".cert.key")
-			&& !file_exists("$cert_path/$common_name".".cert.cert")){
-		$cmd = "$conf_dtcadmin_path/genfiles/gen_customer_ssl_cert.sh $cert_path $common_name";
-		$return_string = exec ($cmd, $output, $return_var);
-		chown("$cert_path/$common_name".".cert.csr","$conf_dtc_system_username:$conf_dtc_system_groupname");
-		chown("$cert_path/$common_name".".cert.key","$conf_dtc_system_username:$conf_dtc_system_groupname");
-		chown("$cert_path/$common_name".".cert.cert","$conf_dtc_system_username:$conf_dtc_system_groupname");
-		chown("$cert_path/privkey.pem","$conf_dtc_system_username:$conf_dtc_system_groupname");
-	}
-	if(		   file_exists("$cert_path/$common_name".".cert.csr")
-			&& file_exists("$cert_path/privkey.pem")
-			&& file_exists("$cert_path/$common_name".".cert.key")
-			&& file_exists("$cert_path/$common_name".".cert.cert")){
-		check_certs_sh($cert_path,$common_name);
-		return "yes";
-	}else{
-		return "no";
-	}
-}
-
-function test_valid_local_ip($address){
-	global $console;
-	global $panel_type;
-	global $conf_nated_vhost_ip;
-
-	$port = 80;
-
-        if (!function_exists('socket_create')) {
-		if($panel_type=="cronjob"){
-			echo("The socket_create function does not exist or is not enabled, please ensure you have a php_sockets.so or php_sockets.dll, or have the sockets compiled into PHP.  No IP checks can be done, so assuming all IPs configured are valid.\n");
-		}
-		return true;
-        }
-
-	// turn off error reporting for this function
-	$console .= "Checking IP $address:";
-	$old_error_reporting = error_reporting('E_NONE');
-
-	if($conf_nated_vhost_ip != '*'){
-		if (($sock = socket_create(AF_INET, SOCK_STREAM, SOL_TCP)) < 0) {
-			echo "socket_create() failed: reason: " . socket_strerror($sock) . "\n";
-			return false;
-		}
-	}
-
-	if (!($ret = socket_bind($sock, $address, $port))) {
-		$error = socket_last_error();
-		if ($error == 98 || $error == 48){
-			//echo "Address already in use!\n";
-			$console .= " already in use -> success\n";
-			return true;
-		}
-		else if ($error == 99)
-		{
-			//echo "IP not on server...\n";
-			$console .= " IP not on server -> failed\n";
-			return false;
-		}
-		else if ($error == 13)
-		{
-			if($panel_type=="admin"){
-				$console .= " permission denied -> assuming succes\n";
-				return true;
-			}
-			//echo "Permission denied...\n";
-			$console .= " permission denied -> failed\n";
-			return false;
-		} else {
-			//echo "$error\n";
-			echo "socket_bind()[$address] failed: reason: " . socket_strerror($error) . "\n";
-			$console .= " error ". socket_strerror($error) . " -> failed\n";
-			return false;
-		}
-	} else {
-		// bound ok! (nothing listening on this yet)
-		return true;
-	}
-
-	// turn it back on to what it was
-	error_reporting($old_error_reporting);
-}
-
-function get_defaultCharsetDirective($db_entry){
-	if(!isset($db_entry) || $db_entry == "dtc-wont-add" || $db_entry == ""){
-		return "";
-	}else{
-		if($db_entry == "Off"){
-			return "\tAddDefaultCharset Off\n";
-		}else{
-			return "\tAddDefaultCharset ".$db_entry."\n";
-		}
-	}
-}
-
-function pro_vhost_generate(){
+function pro_nginx_vhost_generate(){
 	global $pro_mysql_domain_table;
 	global $pro_mysql_admin_table;
 	global $pro_mysql_subdomain_table;
 	global $pro_mysql_ssl_ips_table;
-	global $pro_mysql_product_table;
 
 	global $conf_db_version;
 	global $conf_unix_type;
 
-	global $conf_apache_vhost_path;
+	global $conf_nginx_vhost_path;
 	global $conf_generated_file_path;
 	global $conf_dtcshared_path;
 	global $conf_dtcadmin_path;
@@ -196,15 +49,12 @@ function pro_vhost_generate(){
 
 	global $conf_mysql_db;
 
-	global $conf_apache_version;
-	global $conf_apache_directoryindex;
-
-	global $conf_autogen_webmail_alias;
-	global $conf_autogen_webmail_type;
+	global $conf_nginx_version;
 	
-	global $conf_use_shared_ssl;
-	$vhost_file = "";
+	$nginxPort = 8080;
+	$conf_administrative_ssl_port = 8081;
 
+	$vhost_file = "";
 	$logrotate_file = "# Do not edit this file, it's generated
 # edit /etc/dtc/logrotate.template instead!
 ";
@@ -222,12 +72,6 @@ $vhost_file .= "# WARNING ! This file is automatically edited by the dtc cron
 # in your httpd.conf or apache.conf See your distribution manual to know where
 # to find this file (somewhere in /etc/httpd or /etc/apache2 or even in
 # /usr/local/etc/apache/httpd.conf ...).
-
-# Disabling TRACE (for security reasons)
-RewriteEngine on
-RewriteCond %{REQUEST_METHOD} ^(DELETE|TRACE|TRACK)
-RewriteRule .* - [F]
-
 ";
 
 	$vhost_file_listen = "";
@@ -283,35 +127,42 @@ AND $pro_mysql_admin_table.adm_login=$pro_mysql_domain_table.owner;";
 		$nbr_addrs = sizeof($all_site_addrs);
 		for($i=0;$i<$nbr_addrs;$i++){
 			// first write all config'ed IPs with the Listen
-			if (test_valid_local_ip($all_site_addrs[$i]) && !preg_match("/Listen ".$all_site_addrs[$i].":80/", $vhost_file_listen))
+			if (test_valid_local_ip($all_site_addrs[$i]) && !ereg("Listen ".$all_site_addrs[$i].":80", $vhost_file_listen))
 			{
-				$vhost_file_listen .= "Listen ".$all_site_addrs[$i].":80\n";
+				//QH $vhost_file_listen .= "Listen ".$all_site_addrs[$i].":80\n";
 			} else {
-				$vhost_file_listen .= "#Listen ".$all_site_addrs[$i].":80\n";
+				//QH $$vhost_file_listen .= "#Listen ".$all_site_addrs[$i].":80\n";
 			}
 			$query2 = "SELECT * FROM $pro_mysql_domain_table WHERE ip_addr='".$all_site_addrs[$i]."' LIMIT 1;";
 			$result2 = mysql_query ($query2)or die("Cannot execute query \"$query\"");
 			$num_rows2 = mysql_num_rows($result2);
 			if($num_rows2 > 0){
-				$vhost_file .= "NameVirtualHost ".$all_site_addrs[$i].":80\n";
-				if ($conf_use_shared_ssl == "yes") {
-					$vhost_file .= "NameVirtualHost ".$all_site_addrs[$i].":443\n";
-				}
+				//QH $vhost_file .= "NameVirtualHost ".$all_site_addrs[$i].":80\n";
 				if ($enable404feature == true){
-					$vhost_file .= "<VirtualHost ".$all_site_addrs[$i].":80>
+					/* QH $vhost_file .= "<VirtualHost ".$all_site_addrs[$i].":80>
 	ServerName $conf_404_subdomain.$conf_main_domain
 	DocumentRoot $path_404/html
-	<Directory $path_404/html>
-		Allow from all
-	</Directory>
 	ScriptAlias /cgi-bin $path_404/cgi-bin
 	ErrorLog $path_404/logs/error.log
 	LogSQLTransferLogTable ".str_replace("-","A",str_replace(".","_",$conf_main_domain)).'$'.$conf_404_subdomain.'$'."xfer
 	LogSQLScoreDomain $conf_main_domain
 	LogSQLScoreSubdomain $conf_404_subdomain
 	LogSQLScoreTable $conf_mysql_db.http_accounting
-	DirectoryIndex $conf_apache_directoryindex
+	DirectoryIndex index.php index.cgi index.pl index.htm index.html index.php4
 </VirtualHost>\n";
+*/
+				$vhost_file .= "server {\n\tlisten\t{$all_site_addrs[$i]}:{$nginxPort};
+	server_name $conf_404_subdomain.$conf_main_domain;
+	location ~ \.php$ {
+            fastcgi_pass   127.0.0.1:9000;
+            fastcgi_index  index.php;
+            fastcgi_param  SCRIPT_FILENAME  $path_404/html\$fastcgi_script_name;
+            include        /etc/nginx/fastcgi_params;
+        }
+	root $path_404/html;
+	error_log $path_404/logs/error.log;
+	index index.php index.cgi index.pl index.htm index.html index.php4;
+}\n\n";
 					$logrotate_file .= "$path_404/logs/error.log ";
 				}
 			}
@@ -320,27 +171,24 @@ AND $pro_mysql_admin_table.adm_login=$pro_mysql_domain_table.owner;";
 		$ip_for_404=$conf_main_site_ip;
 		if($conf_use_nated_vhost=="yes"){
 			$ip_for_404 = $conf_nated_vhost_ip;
-			if (test_valid_local_ip($conf_nated_vhost_ip) && !preg_match("/Listen ".$conf_nated_vhost_ip.":80/", $vhost_file_listen))
+			if (test_valid_local_ip($conf_nated_vhost_ip) && !ereg("Listen ".$conf_nated_vhost_ip.":80", $vhost_file_listen))
 			{
-				$vhost_file_listen .= "Listen ".$conf_nated_vhost_ip.":80\n";
+				//QH $vhost_file_listen .= "Listen ".$conf_nated_vhost_ip.":80\n";
 			} else {
-				$vhost_file_listen .= "#Listen ".$conf_nated_vhost_ip.":80\n";
+				//QH $vhost_file_listen .= "#Listen ".$conf_nated_vhost_ip.":80\n";
 			}
-			$vhost_file .= "NameVirtualHost ".$conf_nated_vhost_ip.":80\n";
+			//QH $vhost_file .= "NameVirtualHost ".$conf_nated_vhost_ip.":80\n";
 		}else{
-			if (test_valid_local_ip($conf_main_site_ip) && !preg_match("/Listen ".$conf_main_site_ip.":80/", $vhost_file_listen))
+			if (test_valid_local_ip($conf_main_site_ip) && !ereg("Listen ".$conf_main_site_ip.":80", $vhost_file_listen))
 			{
-				$vhost_file_listen .= "Listen ".$conf_main_site_ip.":80\n";
+				//QH $vhost_file_listen .= "Listen ".$conf_main_site_ip.":80\n";
 			} else {
-				$vhost_file_listen .= "#Listen ".$conf_main_site_ip.":80\n";
+				//QH $vhost_file_listen .= "#Listen ".$conf_main_site_ip.":80\n";
 			}
-			$vhost_file .= "NameVirtualHost ".$conf_main_site_ip.":80\n";
-			if ($conf_use_shared_ssl == "yes") {
-				$vhost_file .= "NameVirtualHost ".$conf_main_site_ip.":443\n";
-			}
+			//QH $vhost_file .= "NameVirtualHost ".$conf_main_site_ip.":80\n";
 		}
 		if ($enable404feature == true){
-			$vhost_file .= "<VirtualHost ".$ip_for_404.":80>
+			/* QH $vhost_file .= "<VirtualHost ".$ip_for_404.":80>
         ServerName $conf_404_subdomain.$conf_main_domain
         DocumentRoot $path_404/html
         ScriptAlias /cgi-bin $path_404/cgi-bin
@@ -349,32 +197,26 @@ AND $pro_mysql_admin_table.adm_login=$pro_mysql_domain_table.owner;";
         LogSQLScoreDomain $conf_main_domain
         LogSQLScoreSubdomain $conf_404_subdomain
         LogSQLScoreTable $conf_mysql_db.http_accounting
-        DirectoryIndex $conf_apache_directoryindex
+        DirectoryIndex index.php index.cgi index.pl index.htm index.html index.php4
 </VirtualHost>\n";
-
-		if ($conf_use_shared_ssl == "yes") {
-			
-		    $vhost_file .= "<VirtualHost ".$conf_main_site_ip.":443>
-        ServerName $conf_404_subdomain.$conf_main_domain
-        DocumentRoot $path_404/html
-        ScriptAlias /cgi-bin $path_404/cgi-bin
-        ErrorLog $path_404/logs/error.log
-        LogSQLTransferLogTable ".str_replace("-","A",str_replace(".","_",$conf_main_domain)).'$'.$conf_404_subdomain.'$'."xfer
-        LogSQLScoreDomain $conf_main_domain
-        LogSQLScoreSubdomain $conf_404_subdomain
-        LogSQLScoreTable $conf_mysql_db.http_accounting
-        DirectoryIndex $conf_apache_directoryindex
-	SSLEngine on
-	SSLCertificateFile ".$conf_generated_file_path."/ssl/new.cert.cert
-	SSLCertificateKeyFile ".$conf_generated_file_path."/ssl/new.cert.key
-</VirtualHost>\n\n";	
+*/
+			$vhost_file .= "server {\n\tlisten\t{$ip_for_404}:{$nginxPort};
+    server_name $conf_404_subdomain.$conf_main_domain;
+    location ~ \.php$ {
+            fastcgi_pass   127.0.0.1:9000;
+            fastcgi_index  index.php;
+            fastcgi_param  SCRIPT_FILENAME  $path_404/html\$fastcgi_script_name;
+            include        /etc/nginx/fastcgi_params;
+        }
+    root $path_404/html;
+    error_log $path_404/logs/error.log;
+    index index.php index.cgi index.pl index.htm index.html index.php4;
+};\n\n";
+			$logrotate_file .= "$path_404/logs/error.log ";
 		}
-
-    		$logrotate_file .= "$path_404/logs/error.log ";
-	    }
-	
 	}
 
+/* QH
 	$vhost_file .= "<Directory $conf_dtcadmin_path>
 	Options FollowSymLinks
 	Order Deny,Allow
@@ -390,44 +232,16 @@ AND $pro_mysql_admin_table.adm_login=$pro_mysql_domain_table.owner;";
 	Order Deny,Allow
 	Allow from all
 </Directory>\n";
+*/
 
-	if($conf_autogen_webmail_alias == "yes"){
-		if($conf_autogen_webmail_type == "squirrelmail"){
-			$vhost_file .= "RedirectPermanent /webmail https://$conf_administrative_site/squirrelmail\n";
-		}else{
-			$vhost_file .= "RedirectPermanent /webmail https://$conf_administrative_site/roundcube\n";
-		}
-	}
-
-	#############################
-	# mod_cband user generation #
-	#############################
-	$vhost_file .= "<IfModule mod_cband.c>\n";
-	$q = "SELECT DISTINCT adm_login,$pro_mysql_product_table.bandwidth FROM $pro_mysql_domain_table,$pro_mysql_admin_table,$pro_mysql_product_table
-WHERE $pro_mysql_domain_table.owner=$pro_mysql_admin_table.adm_login
-AND $pro_mysql_product_table.id=$pro_mysql_admin_table.prod_id
-AND $pro_mysql_admin_table.prod_id != '0'
-AND $pro_mysql_admin_table.id_client != '0'";
-	$r = mysql_query($q)or die("Cannot query $q line ".__LINE__." file ".__FILE__." sql said: ".mysql_error());
-	$n = mysql_num_rows($r);
-	for($i=0;$i<$n;$i++){
-		$a = mysql_fetch_array($r);
-		$vhost_file .= "
-<CBandUser ".$a["adm_login"].">
-	CBandSpeed 10Mbps 10 30
-	CBandRemoteSpeed 2Mbps 3 3
-	CBandLimit ".$a["bandwidth"]."M
-	CBandPeriod 4W
-	CBandPeriodSlice 1W
-	CBandExceededSpeed 32kbps 2 5
-	CBandUserScoreboard /var/lib/dtc/etc/cband_scores/".$a["adm_login"]."
-</CBandUser>
-";
-	}
-	$vhost_file .= "</IfModule>\n";
-	#################################
-	# end mod_cband user generation #
-	#################################
+//	This is not needed anymore as we don't use cgi-bin for the rrdtool graphing anymore
+//	If you need it for your specific config, then add it in the main apache config
+//	if($conf_unix_type == "debian"){
+//		$vhost_file .= "ScriptAlias /cgi-bin /usr/lib/cgi-bin
+//<Directory /usr/lib/cgi-bin>
+//	Options FollowSymLinks
+//</Directory>\n";
+//	}
 
 	for($i=0;$i<$num_rows;$i++){
 		$row = mysql_fetch_array($result) or die ("Cannot fetch user");
@@ -442,10 +256,6 @@ AND $pro_mysql_admin_table.id_client != '0'";
 		$domain_safe_mode = $row["safe_mode"];
 		$domain_sbox_protect = $row["sbox_protect"];
 		$domain_parking = $row["domain_parking"];
-		$domain_parking_type = $row["domain_parking_type"];
-		$domain_wildcard_dns = $row["wildcard_dns"];
-		$domain_default_sub_server_alias = $row["default_sub_server_alias"];
-
 		unset($backup_ip_addr);
 		if (isset($row["backup_ip_addr"])){
 			$backup_ip_addr = $row["backup_ip_addr"];
@@ -455,13 +265,13 @@ AND $pro_mysql_admin_table.id_client != '0'";
 		} 
 		// need to check if we have a NameVirtualHost entry for this backup IP, to support multiple backup sites on one IP
 		if (isset($backup_ip_addr)){
-			if (test_valid_local_ip($backup_ip_addr) && !preg_match("/Listen ".$backup_ip_addr.":80/", $vhost_file_listen)){
-				$vhost_file_listen .= "Listen ".$backup_ip_addr.":80\n";
+			if (test_valid_local_ip($backup_ip_addr) && !ereg("Listen ".$backup_ip_addr.":80", $vhost_file_listen)){
+				//QH $vhost_file_listen .= "Listen ".$backup_ip_addr.":80\n";
 			} else {
-				$vhost_file_listen .= "#Listen ".$backup_ip_addr.":80\n";
+				//QH $vhost_file_listen .= "#Listen ".$backup_ip_addr.":80\n";
 			}
-			if (!preg_match("/NameVirtualHost $backup_ip_addr/", $vhost_file)){
-				$vhost_file .= "NameVirtualHost ".$backup_ip_addr.":80\n";
+			if (!ereg("NameVirtualHost $backup_ip_addr", $vhost_file)){
+				//QH $vhost_file .= "NameVirtualHost ".$backup_ip_addr.":80\n";
 			}
 		}
 		if($conf_use_multiple_ip == "yes"){
@@ -479,8 +289,7 @@ AND $pro_mysql_admin_table.id_client != '0'";
 		$result2 = mysql_query ($query2)or die("Cannot execute query \"$query2\"");
 		$num_rows2 = mysql_num_rows($result2);
 		if($num_rows2 != 1){
-			echo("No user of that name ($web_owner)!\n");
-			continue;
+			die("No user of that name !");
 		}
 		$webadmin = mysql_fetch_array($result2) or die ("Cannot fetch user");
 		$web_path = $webadmin["path"];
@@ -506,37 +315,19 @@ AND $pro_mysql_admin_table.id_client != '0'";
 
 		// Grab all subdomains
 		if($web_name == $conf_main_domain){
-			$query2 = "SELECT * FROM $pro_mysql_subdomain_table WHERE domain_name='$web_name' AND ip='default' AND subdomain_name!='$conf_404_subdomain' AND subdomain_name!='$web_default_subdomain' ORDER BY subdomain_name;";
+			$query2 = "SELECT * FROM $pro_mysql_subdomain_table WHERE domain_name='$web_name' AND ip='default' AND subdomain_name!='$conf_404_subdomain' ORDER BY subdomain_name;";
 		}else{
-			$query2 = "SELECT * FROM $pro_mysql_subdomain_table WHERE domain_name='$domain_to_get' AND ip='default' AND subdomain_name!='$web_default_subdomain' ORDER BY subdomain_name;";
+			$query2 = "SELECT * FROM $pro_mysql_subdomain_table WHERE domain_name='$domain_to_get' AND ip='default' ORDER BY subdomain_name;";
 		}
 		$result2 = mysql_query ($query2)or die("Cannot execute query \"$query2\"");
 		$num_rows2 = mysql_num_rows($result2);
-
-		unset($temp_array_subs);
-		$temp_array_subs = array();
-		for($j=0;$j<$num_rows2;$j++){
-			$temp_array_subs[] = mysql_fetch_array($result2) or die ("Cannot fetch user line ".__LINE__." file ".__FILE__);
-		}
-
-		// We get the default subdomain and we add it at the end of the array. The goal is to have the
-		// wildcard subdomain be the last in the list of the vhosts.conf
-		$query2 = "SELECT * FROM $pro_mysql_subdomain_table WHERE domain_name='$domain_to_get' AND ip='default' AND subdomain_name='$web_default_subdomain';";
-		$result2 = mysql_query ($query2)or die("Cannot execute query \"$query2\"");
-		$my_num_rows = mysql_num_rows($result2);
-		if($my_num_rows == 1){
-			$temp_array_subs[] = mysql_fetch_array($result2) or die ("Cannot fetch user".__LINE__." file ".__FILE__);
-			$num_rows2++;
-		}
-
 // This is a bad idea to die in this case
 // because it actualy happen if you redirect www ip to something else.
 //		if($num_rows2 < 1){
 //			die("No subdomain for domain $web_name !");
 //		}
 		for($j=0;$j<$num_rows2;$j++){
-			$subdomain = $temp_array_subs[$j];
-//			$subdomain = mysql_fetch_array($result2) or die ("Cannot fetch user");
+			$subdomain = mysql_fetch_array($result2) or die ("Cannot fetch user");
 			$web_subname = $subdomain["subdomain_name"];
 			if( $subdomain["customize_vhost"] == ""){
 				$custom_directives = "";
@@ -575,17 +366,20 @@ AND $pro_mysql_admin_table.id_client != '0'";
 				$log_tablename = str_replace("-","A",str_replace(".","_",$web_name)).'$'.str_replace("-","A",str_replace(".","_",$web_subname));
 				if($conf_use_ssl == "yes" && $k == 0){
 					# add the directive for SSL here
-					if (test_valid_local_ip($ip_to_write) && !preg_match("/Listen ".$ip_to_write.":".$conf_administrative_ssl_port."/", $vhost_file_listen))
+					if (test_valid_local_ip($ip_to_write) && !ereg("Listen ".$ip_to_write.":".$conf_administrative_ssl_port, $vhost_file_listen))
 					{
-						$vhost_file_listen .= "Listen ".$ip_to_write.":".$conf_administrative_ssl_port."\n";
+						//QH $vhost_file_listen .= "Listen ".$ip_to_write.":".$conf_administrative_ssl_port."\n";
 					} else {
-						$vhost_file_listen .= "#Listen ".$ip_to_write.":".$conf_administrative_ssl_port."\n";
+						//QH $vhost_file_listen .= "#Listen ".$ip_to_write.":".$conf_administrative_ssl_port."\n";
 					}
-					$vhost_file .= "<VirtualHost ".$ip_to_write.":".$conf_administrative_ssl_port.">\n";
+					//QH $vhost_file .= "<VirtualHost ".$ip_to_write.":".$conf_administrative_ssl_port.">\n";
+					$vhost_file .= "server {\n\tlisten\t{$ip_to_write}:{$conf_administrative_ssl_port};\n";
 				} else if ($k == 1 && isset($backup_ip_addr) || ($conf_use_ssl != "yes" && $k == 0 && isset($backup_ip_addr))) {
-					$vhost_file .= "<VirtualHost ".$backup_ip_addr.":80>\n";
+					//QH $vhost_file .= "<VirtualHost ".$backup_ip_addr.":80>\n";
+					$vhost_file .= "server {\n\tlisten\t{$backup_ip_addr}:{$nginxPort};\n";
 				}else {
-					$vhost_file .= "<VirtualHost ".$ip_to_write.":80>\n";
+					//QH $vhost_file .= "<VirtualHost ".$ip_to_write.":80>\n";
+					$vhost_file .= "server {\n\tlisten\t{$ip_to_write}:{$nginxPort};\n";
 				}
 
 				// Added by Luke
@@ -605,8 +399,7 @@ AND $pro_mysql_admin_table.id_client != '0'";
 					$alias_user_result = mysql_query($alias_user_query) or die("Cannot fetch user for Alias");
 					$num_rows_alias_user = mysql_num_rows($alias_user_result);
 					if ($num_rows_alias_user != 1) {
-						echo("No user of that name ($web_ownerX)!\n");
-						continue;
+						die("No user of that name!");
 					}
 					$alias_path = mysql_fetch_array($alias_user_result) or die ("Cannot fetch user");
 					$web_pathX = $alias_path["path"];
@@ -628,47 +421,54 @@ AND $pro_mysql_admin_table.id_client != '0'";
 						}else{
 							$safex = "php_admin_value safe_mode 1";
 						}
-						$vhost_file .= "\tAlias /$subdomx.$web_nameX $web_pathX/$web_nameX/subdomains/$subdomx/html
+						/* QH $vhost_file .= "\tAlias /$subdomx.$web_nameX $web_pathX/$web_nameX/subdomains/$subdomx/html
 	<Location /$subdomx.$web_nameX>
 		".$safex.$custom_directives."
 		php_admin_value open_basedir \"$web_pathX/$web_nameX/:$conf_php_library_path:$conf_php_additional_library_path:\"
 		$gblx
 	</Location>\n";
+*/
+						$vhost_file .= "\tlocation /$subdomx.$web_nameX {
+		root $web_pathX/$web_nameX/subdomains/$subdomx/html;
+	}\n";
 					}
 				}
 				// End of Luke's patch
 
-				$vhost_file .= "	ServerName $web_subname.$web_name\n";
+				//QH $vhost_file .= "	ServerName $web_subname.$web_name\n";
+				$vhost_file .= "server_name $web_subname.$web_name;\n";
 				if($conf_use_ssl == "yes" && $k == 0){
-					$vhost_file .= "	SSLEngine on
+				$vhost_file .= "        ssl                  on;
+        ssl_certificate      ".$conf_generated_file_path."/ssl/new.cert.cert;
+        ssl_certificate_key  ".$conf_generated_file_path."/ssl/new.cert.key;
+        ssl_session_timeout  5m;
+        ssl_protocols  SSLv2 SSLv3 TLSv1;
+        ssl_ciphers  ALL:!ADH:!EXPORT56:RC4+RSA:+HIGH:+MEDIUM:+LOW:+SSLv2:+EXP;
+        ssl_prefer_server_ciphers   on;\n\n";
+					/* QH $vhost_file .= "	SSLEngine on
 	SSLCertificateFile ".$conf_generated_file_path."/ssl/new.cert.cert
 	SSLCertificateKeyFile ".$conf_generated_file_path."/ssl/new.cert.key\n";
-					if (file_exists($conf_generated_file_path."/ssl/new.cert.ca")) {
-						$vhost_file .= "	SSLCertificateChainFile ".$conf_generated_file_path."/ssl/new.cert.ca\n";
-					}
+*/
+/*					$vhost_file .= "\tssl\ton;
+	ssl_certificate {$conf_generated_file_path}/ssl/new.cert.cert;
+	ssl_certificate_key {$conf_generated_file_path}/ssl/new.cert.key;\n";
+*/
 				}
 				vhost_chk_dir_sh("$web_path/$web_name/subdomains/$web_subname/html");
 				vhost_chk_dir_sh("$web_path/$web_name/subdomains/$web_subname/logs");
 				vhost_chk_dir_sh("$web_path/$web_name/subdomains/$web_subname/cgi-bin");
-				if ( $conf_unix_type == "bsd" ) {
-					$vhost_file .= "	Alias /phpmyadmin ".$conf_tools_prefix."/phpMyAdmin\n";
-				}else{
-					$vhost_file .= "	Alias /phpmyadmin ".$conf_tools_prefix."/phpmyadmin\n";
-				}
-				$vhost_file .= "	Alias /dtc $conf_dtcclient_path
+/* QH
+				$vhost_file .= "	Alias /phpmyadmin ".$conf_tools_prefix."/phpmyadmin
+	Alias /dtc $conf_dtcclient_path
 	Alias /dtcdoc $conf_dtcdoc_path/html/en
 	Alias /dtcemail $conf_dtcemail_path
-	Alias /dtcadmin $conf_dtcadmin_path/
+	Alias /dtcadmin $conf_dtcadmin_path
 	Alias /stats $web_path/$web_name/subdomains/$web_subname/logs
-	Alias /awstats-icon $conf_tools_prefix/awstats/icon
+	Alias /awstats-icon /usr/share/awstats/icon
 	Alias /squirrelmail ".$conf_tools_prefix."/squirrelmail
 	Alias /roundcube /var/lib/roundcube
-	Alias /extplorer /usr/share/extplorer
 	php_admin_value sendmail_from webmaster@$web_name
 	DocumentRoot $web_path/$web_name/subdomains/$web_subname/html
-	<Directory $web_path/$web_name/subdomains/$web_subname/html>
-		Allow from all
-	</Directory>
 # No ScriptAlias: we want to use system's /usr/lib/cgi-bin !!!
 #	ScriptAlias /cgi-bin $web_path/$web_name/subdomains/$web_subname/cgi-bin
 	ErrorLog $web_path/$web_name/subdomains/$web_subname/logs/error.log
@@ -676,23 +476,99 @@ AND $pro_mysql_admin_table.id_client != '0'";
 	LogSQLScoreDomain $web_name
 	LogSQLScoreSubdomain $web_subname
 	LogSQLScoreTable $conf_mysql_db.http_accounting
-	DirectoryIndex $conf_apache_directoryindex$custom_directives
-	<IfModule mod_bwshare.c>
-		BW_throttle_off 1
-	</IfModule>
-	<IfModule mod_security2.c>
-		SecRuleEngine Off
-	</IfModule>";
-	if($conf_force_use_https == "yes" && $conf_use_ssl == "yes"){
-		$vhost_file .= "
-	RewriteEngine On
-	RewriteCond %{HTTPS} off
-	RewriteRule (.*) https://$conf_administrative_site$1 [R,L]";
-	}
-$vhost_file .= "
+	DirectoryIndex index.php index.cgi index.pl index.htm index.html index.php4$custom_directives
 </VirtualHost>
 
 ";
+*/
+				$vhost_file .= "\tlocation /phpmyadmin {
+                alias ". $conf_tools_prefix."/phpmyadmin;
+        }
+
+        location ~ ^/phpmyadmin.+\.php$ {
+                fastcgi_pass   127.0.0.1:9000;
+                fastcgi_index  index.php;
+                fastcgi_param  SCRIPT_FILENAME  ".$conf_tools_prefix."\$fastcgi_script_name;
+                include        /etc/nginx/fastcgi_params;
+                fastcgi_param  HTTPS on;
+        }
+	
+	location /dtcemail {
+                alias $conf_dtcemail_path;
+        }
+	location ~ ^/dtcemail(.+\.php)$ {
+                fastcgi_pass   127.0.0.1:9000;
+                fastcgi_index  index.php;
+                fastcgi_param  SCRIPT_FILENAME  ".$conf_dtcemail_path."\$1;
+                include        /etc/nginx/fastcgi_params;
+                fastcgi_param  HTTPS on;
+        }
+	location /dtcadmin {
+                alias $conf_dtcadmin_path;
+        }
+	location ~ ^/dtcadmin(.+\.php)$ {
+                fastcgi_pass   127.0.0.1:9000;
+                fastcgi_index  index.php;
+                fastcgi_param  SCRIPT_FILENAME  ".$conf_dtcadmin_path."\$1;
+                include        /etc/nginx/fastcgi_params;
+                fastcgi_param  HTTPS on;
+        }
+	location /stats {
+                alias $web_path/$web_name/subdomains/$web_subname/logs;
+        }
+	location ~ ^/stats.+\.php$ {
+                fastcgi_pass   127.0.0.1:9000;
+                fastcgi_index  index.php;
+                fastcgi_param  SCRIPT_FILENAME  $web_path/$web_name/subdomains/$web_subname/logs\$fastcgi_script_name;
+                include        /etc/nginx/fastcgi_params;
+                fastcgi_param  HTTPS on;
+        }
+	location /awstats-icon {
+                alias /usr/share/awstats/icon;
+        }
+	location /squirrelmail {
+                alias $conf_tools_prefix/squirrelmail;
+        }
+	location ~ ^/squirrelmail.+\.php$ {
+                fastcgi_pass   127.0.0.1:9000;
+                fastcgi_index  index.php;
+                fastcgi_param  SCRIPT_FILENAME  ".$conf_tools_prefix."/squirrelmail\$fastcgi_script_name;
+                include        /etc/nginx/fastcgi_params;
+                fastcgi_param  HTTPS on;
+        }
+	location /roundcube {
+                alias /var/lib/roundcube;
+        }
+	location ~ ^/roundcube.+\.php$ {
+                fastcgi_pass   127.0.0.1:9000;
+                fastcgi_index  index.php;
+                fastcgi_param  SCRIPT_FILENAME  /var/lib/roundcube\$fastcgi_script_name;
+                include        /etc/nginx/fastcgi_params;
+                fastcgi_param  HTTPS on;
+        }
+    location /dtc {
+        alias $conf_dtcclient_path;
+    }
+        location ~ ^/dtc(.+\.php)$ {
+                fastcgi_pass   127.0.0.1:9000;
+                fastcgi_index  index.php;
+                fastcgi_param  SCRIPT_FILENAME  ".$conf_dtcclient_path."\$1;
+                include        /etc/nginx/fastcgi_params;
+                fastcgi_param  HTTPS on;
+        }
+    location /dtcdoc {
+                alias $conf_dtcdoc_path/html/en;
+        }
+	root $web_path/$web_name/subdomains/$web_subname/html;
+	location ~ \.php$ {
+            fastcgi_pass   127.0.0.1:9000;
+            fastcgi_index  index.php;
+            fastcgi_param  SCRIPT_FILENAME  $web_path/$web_name/subdomains/$web_subname/html/\$fastcgi_script_name;
+            include        /etc/nginx/fastcgi_params;
+        }
+	index index.php index.cgi index.pl index.htm index.html index.php4;
+}\n\n";
+	
 			$logrotate_file .= "$web_path/$web_name/subdomains/$web_subname/logs/error.log ";
 } // - end of for loop
 
@@ -701,34 +577,37 @@ $vhost_file .= "
 // ---------------------------------------------------
 			} else {
 				// Generate a permanet redirect for all subdomains of target if using a domain parking
-				if($domain_parking != "no-parking" && ($domain_parking_type == "redirect" || $conf_administrative_site == "$web_subname.$domain_to_get")){
+				if($domain_parking != "no-parking"){
 					if($j == 0){
 						$console .= "Making domain parking for $web_name\n";
-						$vhost_file .= "<VirtualHost ".$ip_to_write.":80>
+						/* QH $vhost_file .= "<VirtualHost ".$ip_to_write.":80>
 	ServerName $web_name
 	Redirect permanent / http://$domain_parking/
 </VirtualHost>\n\n";
+*/
+						$vhost_file .= "server {\n\tlisten\t{$ip_to_write}:{$nginxPort};
+	server_name $web_name;
+	rewrite ^(.*)$ http://{$domain_parking}/ permanent;
+}\n\n";
 					}
 					$console .= "Making domain parking for $web_subname.$web_name\n";
+/* QH
 					$vhost_file .= "<VirtualHost ".$ip_to_write.":80>
 	ServerName $web_subname.$web_name
 	Redirect permanent / http://$web_subname.$domain_parking/
 </VirtualHost>\n\n";
-                                } else if ($domain_parking != "no-parking" && $domain_parking_type == "serveralias") {
-                                        // do nothing here, as serveralias parking will be injected throughout the generation of the main domain
+*/
+					$vhost_file .= "server {\n\tlisten\t{$ip_to_write}:{$nginxPort};
+        server_name $web_subname.$web_name;
+        rewrite ^(.*)$ http://{$web_subname}.{$domain_parking}/ permanent;
+}\n\n";
 				}else{
-					vhost_chk_dir_sh("$web_path/$domain_to_get/subdomains/$web_subname/logs");
-					vhost_chk_dir_sh("$web_path/$domain_to_get/subdomains/$web_subname/html");
-					vhost_chk_dir_sh("$web_path/$domain_to_get/subdomains/$web_subname/cgi-bin");
-					// We need to make it for both in case of a domain parking
-					if($domain_to_get != $web_name){
-						vhost_chk_dir_sh("$web_path/$web_name/subdomains/$web_subname/logs");
-						vhost_chk_dir_sh("$web_path/$web_name/subdomains/$web_subname/html");
-						vhost_chk_dir_sh("$web_path/$web_name/subdomains/$web_subname/cgi-bin");
-					}
+					vhost_chk_dir_sh("$web_path/$web_name/subdomains/$web_subname/logs");
+					vhost_chk_dir_sh("$web_path/$web_name/subdomains/$web_subname/html");
+					vhost_chk_dir_sh("$web_path/$web_name/subdomains/$web_subname/cgi-bin");
 					$iteration_table = array();
 					$iteration_table[] = "normal";
-					$ssl_cert_folder_path = "$web_path/$domain_to_get/subdomains/$web_subname/ssl";
+					$ssl_cert_folder_path = "$web_path/$web_name/subdomains/$web_subname/ssl";
 					if($subdomain["ssl_ip"] != "none"){
 						$ssl_returns = checkCertificate($ssl_cert_folder_path,$web_subname.".".$web_name);
 						if($ssl_returns == "yes"){
@@ -743,14 +622,14 @@ $vhost_file .= "
 									$port=$row["port"];
 									$ip_vhost=$ip_to_write;
 									if(empty($port)){
-										$port = "443";
+										$port = $nginxSSLPort;
 									}
 								}else{
-									$port = "443";
+									$port = $nginxSSLPort;
 									$ip_vhost = $subdomain["ssl_ip"];
 								 }
 							}else{
-								$port = "443";
+								$port = $nginxSSLPort;
 							}
 							// End of <krystian@ezpear.com> patch
 						}
@@ -764,64 +643,13 @@ $vhost_file .= "
 
 					$log_tablename = str_replace("-","A",str_replace(".","_",$web_name)).'$'.str_replace("-","A",str_replace(".","_",$web_subname));
 					$vhost_more_conf = "";
+					$vhost_additional_server_name = "";
 					if($subdomain["register_globals"] == "yes"){
-						$vhost_more_conf .= "	php_admin_value register_globals 1\n";
-					}
-					if($subdomain["php_memory_limit"] != ""){
-						$vhost_more_conf .= "	php_admin_value memory_limit ".$subdomain["php_memory_limit"]."M\n";
-					}
-					if($subdomain["php_max_execution_time"] != ""){
-						$vhost_more_conf .= "	php_admin_value max_execution_time ".$subdomain["php_max_execution_time"]."\n";
-					}
-					if($subdomain["php_session_auto_start"] == "yes"){
-						$vhost_more_conf .= "	php_admin_flag session_autostart ".$subdomain["php_session_auto_start"]."\n";
-					}
-					if($subdomain["php_allow_url_fopen"] == "yes"){
-						$vhost_more_conf .= "	php_admin_flag allow_url_fopen on\n";
-					}
-					if($subdomain["php_post_max_size"] != ""){
-						$vhost_more_conf .= "	php_admin_value post_max_size ".$subdomain["php_post_max_size"]."M\n";
-					}
-					if($subdomain["php_upload_max_filesize"] != ""){
-						$vhost_more_conf .= "	php_admin_value upload_max_filesize ".$subdomain["php_upload_max_filesize"]."M\n";
-					}
-					
-					if($subdomain["use_shared_ssl"] == "yes" && $conf_use_shared_ssl == "yes"){
-						$iteration_table[]="shared_ssl";
-					}
-					if (preg_match('|^http(s)?://[a-z0-9-]+(.[a-z0-9-]+)*(:[0-9]+)?(/.*)?$|i', $subdomain["redirect_url"])) {
-						$vhost_more_conf .= "Redirect / ".$subdomain["redirect_url"]."\n";
+						//QH $vhost_more_conf .= "	php_admin_value register_globals 1\n";
 					}
 					if($web_subname == "$web_default_subdomain"){
-						if ($domain_parking == "no-parking"){
-							// no domain parking
-							$server_alias_domain = $domain_to_get;
-						} else {
-							// parking: same_docroot
-							$server_alias_domain = $web_name;
-							// parking: redirect doesn't happen in this else branch
-						}
-						if($domain_default_sub_server_alias == "yes"){
-							$vhost_more_conf .= "	ServerAlias $server_alias_domain\n";
-						}
-						if($domain_wildcard_dns == "yes"){
-							$vhost_more_conf .= "   ServerAlias *.$server_alias_domain\n";
-						}
-					}
-
-					// ServerAlias for parked domains
-					$q_serveralias = "select * from $pro_mysql_domain_table where domain_parking_type='serveralias' and domain_parking='$web_name'";
-					$r_serveralias = mysql_query($q_serveralias) or die("Cannot query \"$q\" line ".__LINE__." file ".__FILE__." sql said: ".mysql_error());
-					while ($row_serveralias = mysql_fetch_array($r_serveralias)) {
-						// default subdomain and wildcard subdomain settings are inherited from the main domain, not the parked domain
-						// this is because in the gui these settings are not accessable for a parked domain
-						if ($web_subname == "$web_default_subdomain") {
-							$vhost_more_conf .= "        ServerAlias ${row_serveralias["name"]}\n";
-						}
-						$vhost_more_conf .= "        ServerAlias $web_subname.${row_serveralias["name"]}\n";
-						if ($domain_wildcard_dns == "yes") {
-							$vhost_more_conf .= "        ServerAlias *.${row_serveralias["name"]}\n";
-						}
+						//QH $vhost_more_conf .= "	ServerAlias $web_name\n";
+						$vhost_additional_server_name .= "$web_name"; 
 					}
 
 					// Sbox and safe mode protection values
@@ -831,7 +659,7 @@ $vhost_file .= "
 						$safe_mode_value = "1";
 					}
 					if($domain_sbox_protect == "no" && $subdomain["sbox_protect"] == "no"){
-						$cgi_directive = "ScriptAlias /cgi-bin $web_path/$domain_to_get/subdomains/$web_subname/cgi-bin";
+						$cgi_directive = "ScriptAlias /cgi-bin $web_path/$web_name/subdomains/$web_subname/cgi-bin";
 					}else{
 						$cgi_directive = "RewriteEngine on
 	RewriteRule ^/cgi-bin/(.*) /cgi-bin/sbox/$1 [PT]";
@@ -840,74 +668,86 @@ $vhost_file .= "
 					for ($k = 0; $k < $gen_iterations; $k++){
 						switch($iteration_table[$k]){
 						case "backup":
-							$vhost_file .= "<VirtualHost ".$backup_ip_addr.":80>\n";
+							//QH $vhost_file .= "<VirtualHost ".$backup_ip_addr.":80>\n";
+							$vhost_file .= "server {\n\tlisten\t{$backup_ip_addr}:{$nginxPort};\n";
 							break;
 						case "normal":
-							$vhost_file .= "<VirtualHost ".$ip_to_write.":80>\n";
+							//QH $vhost_file .= "<VirtualHost ".$ip_to_write.":80>\n";
+							$vhost_file .= "server {\n\tlisten\t{$ip_to_write}:{$nginxPort};\n";
 							break;
 						case "ssl":
 							//if($conf_use_nated_vhost=="no"){
 							//	$vhost_file .= "Listen ".$ip_vhost.":$port\n";
 							//}
+/* QH
 							$vhost_file .= "Listen ".$subdomain["ssl_ip"].":$port\n";
 							$vhost_file .= "<VirtualHost ".$subdomain["ssl_ip"].":$port>\n";
 							$vhost_file .= "	SSLEngine on\n";
-							$vhost_file .= "	SSLCertificateFile $ssl_cert_folder_path/".$web_subname.".".$domain_to_get.".cert.cert\n";
-							$vhost_file .= "	SSLCertificateKeyFile $ssl_cert_folder_path/".$web_subname.".".$domain_to_get.".cert.key\n";
-							if (file_exists("$ssl_cert_folder_path/".$web_subname.".".$domain_to_get.".cert.ca")) {
-								$vhost_file .= "	SSLCertificateChainFile $ssl_cert_folder_path/".$web_subname.".".$domain_to_get.".cert.ca\n";
-							}
-							break;
-						case "shared_ssl":
-							$vhost_file .= "<VirtualHost ".$ip_to_write.":443>\n";
-							$vhost_file .= "	SSLEngine on\n";
-							$vhost_file .= "	SSLCertificateFile ".$conf_generated_file_path."/ssl/new.cert.cert\n";
-							$vhost_file .= "	SSLCertificateKeyFile ".$conf_generated_file_path."/ssl/new.cert.key\n";
-							if (file_exists($conf_generated_file_path."/ssl/new.cert.ca")) {
-								$vhost_file .= "	SSLCertificateChainFile ".$conf_generated_file_path."/ssl/new.cert.ca\n";
-							}
+							$vhost_file .= "	SSLCertificateFile $ssl_cert_folder_path/".$web_subname.".".$web_name.".cert.cert\n";
+							$vhost_file .= "	SSLCertificateKeyFile $ssl_cert_folder_path/".$web_subname.".".$web_name.".cert.key\n";
+*/
+							$vhost_file .= "server {\n\tlisten {$subdomain["ssl_ip"]}:{$port};\n";
+/*
+	ssl\ton
+	ssl_certificate {$ssl_cert_folder_path}/{$web_subname}.{$web_name}.cert.cert;
+	ssl_certificate_key {$ssl_cert_folder_path}/{$web_subname}.{$web_name}.cert.key;\n";
+*/
+
 							break;
 						}
+/* QH
 						$vhost_file .= "	ServerName $web_subname.$web_name
 	Alias /stats $web_path/$web_name/subdomains/$web_subname/logs
 	Alias /awstats-icon /usr/share/awstats/icon\n";
+*/
+						$vhost_file .= "\tserver_name $web_subname.$web_name $vhost_additional_server_name;
+	location /stats {
+		root $web_path/$web_name/subdomains/$web_subname/logs;
+	}
+
+	location /awstats-icon {
+		root /usr/share/awstats/icon;
+	}\n\n";
+
+
 						// Disable the site if expired
 						if($site_expired == "yes"){
 							$document_root = $conf_generated_file_path."/expired_site";
-							$vhost_file .= "	DocumentRoot $document_root
-	<Directory $document_root>
-		Allow from all
-	</Directory>\n";
+							//QH $vhost_file .= "	DocumentRoot $document_root\n";
+							$vhost_file .= "\troot $document_root;\n";
 						}else{
-							$document_root = "$web_path/$domain_to_get/subdomains/$web_subname/html";
-							$vhost_file .= "	DocumentRoot $document_root
-	<Directory $document_root>
-		Allow from all
-	</Directory>
+							$document_root = "$web_path/$web_name/subdomains/$web_subname/html";
+							/* QH $vhost_file .= "	DocumentRoot $document_root
 $vhost_more_conf	php_admin_value safe_mode $safe_mode_value
-	php_admin_value sendmail_from phpmailfunction$web_subname@$web_name
-	php_admin_value sendmail_path \"/usr/sbin/sendmail -t -i -f phpmailfunction$web_subname@$domain_to_get\"
-	php_value session.save_path $web_path/$domain_to_get/subdomains/$web_subname/tmp
+	php_admin_value sendmail_from webmaster@$web_name
+	php_value session.save_path $web_path/$web_name/subdomains/$web_subname/tmp
 	<Location />
 		php_admin_value open_basedir \"$web_path:$conf_php_library_path:$conf_php_additional_library_path:\"
 	</Location>
 	$cgi_directive\n".get_defaultCharsetDirective($subdomain["add_default_charset"]);
+*/
+							$vhost_file .= "\t root $document_root;\n";
 						}
+/* QH
 						$vhost_file .= "	ErrorLog $web_path/$web_name/subdomains/$web_subname/logs/error.log
 	LogSQLTransferLogTable $log_tablename\$xfer
 	LogSQLScoreDomain $web_name
 	LogSQLScoreSubdomain $web_subname
 	LogSQLScoreTable $conf_mysql_db.http_accounting
-	DirectoryIndex $conf_apache_directoryindex$custom_directives
-	<IfModule mod_security.c>
-		SecUploadDir $web_path/$domain_to_get/subdomains/$web_subname/tmp
-	</IfModule>
-	<IfModule mod_cband.c>
-		CBandUser $web_owner
-	</IfModule>
+	DirectoryIndex index.php index.cgi index.pl index.htm index.html index.php4$custom_directives
 </VirtualHost>
 
 ";
+*/
+						$vhost_file .= "\terror_log $web_path/$web_name/subdomains/$web_subname/logs/error.log;
+	location ~ \.php$ {
+            fastcgi_pass   127.0.0.1:9000;
+            fastcgi_index  index.php;
+            fastcgi_param  SCRIPT_FILENAME  $document_root\$fastcgi_script_name;
+            include        /etc/nginx/fastcgi_params;
+        }
+	index index.php index.cgi index.pl index.htm index.html index.php4;
+}\n\n";
 						$logrotate_file .= "$web_path/$web_name/subdomains/$web_subname/logs/error.log ";
 						$num_generated_vhosts += $num_rows2;
 					}
@@ -917,14 +757,16 @@ $vhost_more_conf	php_admin_value safe_mode $safe_mode_value
 	}
 
 	// Writting the vhosts.conf file
-	$filep = fopen("$conf_generated_file_path/$conf_apache_vhost_path", "w+");
+	//QH
+	$conf_nginx_vhost_path = "nginx/vhosts.conf";
+	$filep = fopen("$conf_generated_file_path/$conf_nginx_vhost_path", "w+");
 	if( $filep == NULL){
-		die("Cannot open $conf_generated_file_path/$conf_apache_vhost_path file for writting");
+		die("Cannot open $conf_generated_file_path/$conf_nginx_vhost_path file for writting");
 	}
-	fwrite($filep,$vhost_file_listen);
+//QH	fwrite($filep,$vhost_file_listen);
 	fwrite($filep,$vhost_file);
 	fclose($filep);
-	$console .= "$num_generated_vhosts vhosts generated !<br>";
+	$console .= "$num_generated_vhosts nginx vhosts generated !<br>";
 
 	// Writting the vhost_check_dir script
 	$filep = fopen("$conf_generated_file_path/vhost_check_dir","w+");
@@ -972,33 +814,15 @@ $logrotate_template
 
 	sharedscripts
 ";
-		if($conf_apache_version == "2"){
-			$logrotate_file .= "
+    	$logrotate_file .= "
 	postrotate
-		if [ -f /var/run/apache2.pid ]; then
-			/etc/init.d/apache2 restart > /dev/null
+		if [ -f /var/run/nginx.pid ]; then
+			/etc/init.d/nginx restart > /dev/null
 		fi
 	endscript
 }
 ";
-		}else{
-			$logrotate_file .= "
-	postrotate
-		if [ -f /var/run/apache.pid ]; then \
-			if [ -x /usr/sbin/invoke-rc.d ]; then \
-				invoke-rc.d apache reload > /dev/null; \
-			else \
-				if [ -x /etc/init.d/apache ]; then \
-					/etc/init.d/apache reload > /dev/null; \
-				elif [ -x /etc/init.d/httpd ]; then \
-					/etc/init.d/httpd reload > /dev/null; \
-				fi; \
-			fi; \
-		fi;
-	endscript
-}
-";
-		}
+/*QH 
 		$filep = fopen("$conf_generated_file_path/logrotate","w+");
 		if( $filep == NULL){
 			echo ("Cannot open $conf_generated_file_path/logrotate for writting");
@@ -1006,6 +830,7 @@ $logrotate_template
 			fwrite($filep,$logrotate_file);
 			fclose($filep);
 		}
+*/
 		$console .= "logrotate config file generated!<br>";
 	}
 	return true;

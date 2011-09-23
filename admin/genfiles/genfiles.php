@@ -56,6 +56,7 @@ function recurse_chown_chgrp($mypath, $uid, $gid)
 
 // require("genfiles/gen_perso_vhost.php");
 require("genfiles/gen_pro_vhost.php");
+require("genfiles/gen_pro_nginx.php");
 require("genfiles/gen_email_account.php");
 require("genfiles/gen_named_files.php");
 require("genfiles/gen_backup_script.php");
